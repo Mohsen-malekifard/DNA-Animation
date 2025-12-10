@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>انیمیشن سه‌بعدی DNA با جزییات بالا</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000; /* پس‌زمینه مشکی برای کنتراست بهتر */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #canvas-container {
+            width: 100%;
+            height: 100vh;
+            display: block;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #00ffff;
+            font-size: 1.5rem;
+            pointer-events: none;
+            transition: opacity 0.5s;
+        }
+        .ui-overlay {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            color: rgba(255, 255, 255, 0.7);
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px 20px;
+            border-radius: 8px;
+            pointer-events: none;
+            border: 1px solid rgba(0, 255, 255, 0.2);
+        }
+        h1 {
+            margin: 0;
+            font-size: 1.2rem;
+            color: #00ffff;
+        }
+        p {
+            margin: 5px 0 0 0;
+            font-size: 0.9rem;
+        }
+    </style>
+    <!-- بارگذاری کتابخانه Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="loading">در حال بارگذاری ساختار ژنتیکی...</div>
+    <div id="canvas-container"></div>
+    
+    <div class="ui-overlay">
+        <h1>مدل مولکولی DNA</h1>
+        <p>موس را حرکت دهید تا زاویه دید تغییر کند.</p>
+    </div>
+
+    <script>
+        // متغیرهای اصلی
+        let scene, camera, renderer;
+        let dnaGroup;
+        let particles;
+        let mouseX = 0;
+        let mouseY = 0;
+        let windowHalfX = window.innerWidth / 2;
+        let windowHalfY = window.innerHeight / 2;
+
+        // تنظیمات DNA
+        const DNA_SETTINGS = {
+            tubeRadius: 0.2, // ضخامت ستون فقرات
+            ballRadius: 0.4, // اندازه اتم‌ها
+            helixRadius: 4, // شعاع مارپیچ
+            height: 40, // ارتفاع کل رشته
+            turns: 3, // تعداد چرخش‌ها
+            detail: 50 // تعداد جفت بازها
+        };
+
+        window.onload = function() {
+            init();
+            animate();
+            document.getElementById('loading').style.opacity = 0;
+        };
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            // 1. ایجاد صحنه
+            scene = new THREE.Scene();
+            // افکت مه برای عمق دهی
+            scene.fog = new THREE.FogExp2(0x050510, 0.02);
+
+            // 2. تنظیم دوربین
+            camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 25;
+            camera.position.y = 0;
+
+            // 3. رندر کننده
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.toneMapping = THREE.ReinhardToneMapping;
+            container.appendChild(renderer.domElement);
+
+            // 4. نورپردازی
+            const ambientLight = new THREE.AmbientLight(0x404040, 2); // نور محیطی نرم
+            scene.add(ambientLight);
+
+            const pointLight1 = new THREE.PointLight(0x00ffff, 1.5, 50); // نور آبی نئونی
+            pointLight1.position.set(10, 10, 10);
+            scene.add(pointLight1);
+
+            const pointLight2 = new THREE.PointLight(0xff00ff, 1.5, 50); // نور بنفش نئونی
+            pointLight2.position.set(-10, -10, 10);
+            scene.add(pointLight2);
+            
+            const spotLight = new THREE.SpotLight(0xffffff, 1);
+            spotLight.position.set(0, 20, 20);
+            scene.add(spotLight);
+
+            // 5. ساخت DNA
+            createDNA();
+
+            // 6. ساخت ذرات محیطی
+            createParticles();
+
+            // رویدادهای موس و تغییر اندازه صفحه
+            document.addEventListener('mousemove', onDocumentMouseMove, false);
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function createDNA() {
+            dnaGroup = new THREE.Group();
+            
+            // متریال‌ها (جنس مواد)
+            const backboneMaterial = new THREE.MeshPhysicalMaterial({
+                color: 0x2244cc, // آبی تیره
+                metalness: 0.3,
+                roughness: 0.2,
+                clearcoat: 1.0,
+                clearcoatRoughness: 0.1
+            });
+
+            // رنگ‌های بازهای آلی (آدنین، تیمین، سیتوزین، گوانین)
+            const baseColors = [
+                0xff3333, // قرمز
+                0x33ff33, // سبز
+                0xffff33, // زرد
+                0x33ffff  // فیروزه‌ای
+            ];
+
+            const atomGeometry = new THREE.SphereGeometry(DNA_SETTINGS.ballRadius, 32, 32);
+            const bondGeometry = new THREE.CylinderGeometry(0.1, 0.1, 1, 8);
+
+            // حلقه برای ساخت پله‌های DNA
+            for (let i = 0; i < DNA_SETTINGS.detail; i++) {
+                const t = (i / DNA_SETTINGS.detail); // درصد پیشرفت (0 تا 1)
+                const angle = t * Math.PI * 2 * DNA_SETTINGS.turns; // زاویه چرخش
+                
+                // محاسبه موقعیت Y (از پایین به بالا)
+                const y = (t - 0.5) * DNA_SETTINGS.height;
+
+                // مختصات رشته اول
+                const x1 = Math.cos(angle) * DNA_SETTINGS.helixRadius;
+                const z1 = Math.sin(angle) * DNA_SETTINGS.helixRadius;
+
+                // مختصات رشته دوم (180 درجه یا PI اختلاف فاز)
+                const x2 = Math.cos(angle + Math.PI) * DNA_SETTINGS.helixRadius;
+                const z2 = Math.sin(angle + Math.PI) * DNA_SETTINGS.helixRadius;
+
+                // --- ساخت ستون فقرات (Backbone) ---
+                // اتم فسفات رشته اول
+                const atom1 = new THREE.Mesh(atomGeometry, backboneMaterial);
+                atom1.position.set(x1, y, z1);
+                dnaGroup.add(atom1);
+
+                // اتم فسفات رشته دوم
+                const atom2 = new THREE.Mesh(atomGeometry, backboneMaterial);
+                atom2.position.set(x2, y, z2);
+                dnaGroup.add(atom2);
+
+                // --- ساخت پیوندهای میانی (Base Pairs) ---
+                // انتخاب رنگ تصادفی برای جفت‌ها
+                const colorIndex = Math.floor(Math.random() * 2); 
+                // جفت 1: رنگ A و B
+                // جفت 2: رنگ C و D
+                const color1 = baseColors[colorIndex * 2];
+                const color2 = baseColors[colorIndex * 2 + 1];
+
+                const baseMaterial1 = new THREE.MeshStandardMaterial({ color: color1, roughness: 0.3 });
+                const baseMaterial2 = new THREE.MeshStandardMaterial({ color: color2, roughness: 0.3 });
+
+                // نیمه اول اتصال
+                const bond1 = new THREE.Mesh(bondGeometry, baseMaterial1);
+                bond1.scale.set(1, DNA_SETTINGS.helixRadius, 1); // طول سیلندر نصف فاصله
+                bond1.position.set(x1 * 0.5, y, z1 * 0.5);
+                bond1.lookAt(0, y, 0); // نگاه به مرکز
+                bond1.rotateX(Math.PI / 2);
+                dnaGroup.add(bond1);
+
+                // نیمه دوم اتصال
+                const bond2 = new THREE.Mesh(bondGeometry, baseMaterial2);
+                bond2.scale.set(1, DNA_SETTINGS.helixRadius, 1);
+                bond2.position.set(x2 * 0.5, y, z2 * 0.5);
+                bond2.lookAt(0, y, 0);
+                bond2.rotateX(Math.PI / 2);
+                dnaGroup.add(bond2);
+            }
+
+            // کج کردن کل ساختار برای زیبایی بیشتر
+            dnaGroup.rotation.z = Math.PI / 6;
+            scene.add(dnaGroup);
+        }
+
+        function createParticles() {
+            const geometry = new THREE.BufferGeometry();
+            const vertices = [];
+
+            for (let i = 0; i < 600; i++) {
+                const x = (Math.random() - 0.5) * 60;
+                const y = (Math.random() - 0.5) * 60;
+                const z = (Math.random() - 0.5) * 60;
+                vertices.push(x, y, z);
+            }
+
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+
+            const material = new THREE.PointsMaterial({
+                color: 0x88ccff,
+                size: 0.2,
+                transparent: true,
+                opacity: 0.6
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+        }
+
+        function onDocumentMouseMove(event) {
+            mouseX = (event.clientX - windowHalfX) * 0.05; // ضریب حساسیت کمتر
+            mouseY = (event.clientY - windowHalfY) * 0.05;
+        }
+
+        function onWindowResize() {
+            windowHalfX = window.innerWidth / 2;
+            windowHalfY = window.innerHeight / 2;
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // چرخش خودکار DNA
+            if (dnaGroup) {
+                dnaGroup.rotation.y += 0.01; // سرعت چرخش
+                
+                // افکت شناوری (Floating) نرم
+                dnaGroup.position.y = Math.sin(Date.now() * 0.001) * 1;
+            }
+
+            // حرکت ذرات
+            if (particles) {
+                particles.rotation.y -= 0.002;
+                particles.rotation.x += 0.001;
+            }
+
+            // حرکت دوربین بر اساس موس (Parallax effect)
+            camera.position.x += (mouseX - camera.position.x) * 0.05;
+            camera.position.y += (-mouseY - camera.position.y) * 0.05;
+            camera.lookAt(scene.position);
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
